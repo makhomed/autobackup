@@ -1,9 +1,60 @@
 #!/usr/bin/python
 
-import sys, os, subprocess
+""" 
+ # /opt/autobackup/autobackup --host=10.0.2.5 --type=raw --dest=/tank/backup/10.0.2.5 --save=30 
+"""
+
+import sys, os, os.path, subprocess, argparse
+
+def execute(args):
+    process = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True, cwd='/')
+    stdoutdata, stderrdata = process.communicate()
+    return process.returncode, stdoutdata, stderrdata
+
+def execute_or_exit(args):
+    returncode, stdoutdata, stderrdata = execute(args)
+    if returncode != 0:
+        print "fatal error: execute(", args,") failed"
+        print "returncode:", returncode
+        print "stdout:", stdoutdata
+        print "stderr:", stderrdata
+        sys.exit(1)
+    return stdoutdata
+
+def zfs_list():
+    args = 'zfs', 'list', '-H', '-o', 'name,mountpoint'
+    stdoutdata = execute_or_exit(args)
+    lines = stdoutdata.split('\n')
+    datasets = dict()
+    for line in lines:
+        if line == '':
+            continue
+        name, mountpoint = line.split('\t')
+        datasets[mountpoint] = name
+    return datasets
+
+def raw_backup(host, dataset, mountpoint, save):
+    pass
 
 def main():
-    print sys.argv
+    parser = argparse.ArgumentParser(prog='autobackup')
+    parser.add_argument('--host', required=True, help="remote host to backup", metavar='HOST')
+    parser.add_argument('--type', required=True, help="remote host type", choices=['raw', 'ovz'])
+    parser.add_argument('--dest', required=True, help="backup destination on local ZFS", metavar='PATH')
+    parser.add_argument('--save', required=True, help="count of saved backup snapshots", type=int, metavar='COUNT')
+    args = parser.parse_args()
+    if args.save < 1 or args.save > 365:
+        raise ValueError("bad --save value, must be between 1 and 365")
+    args.dest = os.path.abspath(args.dest)
+    datasets = zfs_list()
+    if args.dest not in datasets:
+        raise ValueError("bad --dest value, dataset mountpoint must exists")
+    if args.type == 'raw':
+        raw_backup(host=args.host, dataset=datasets[args.dest], mountpoint=args.dest, save=args.save)
+    elif args.type == 'ovz':
+        ovz_backup(host=args.host, dataset=datasets[args.dest], mountpoint=args.dest, save=args.save)
+    else:
+        raise ValueError("unexpected --type value, must be 'raw' or 'ovz'")
 
 if __name__=="__main__":
     main()
