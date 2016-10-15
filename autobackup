@@ -4,7 +4,7 @@
  # /opt/autobackup/autobackup --host=10.0.2.5 --type=raw --dest=/tank/backup/10.0.2.5 --save=30 
 """
 
-import sys, os, os.path, subprocess, argparse
+import sys, os, os.path, subprocess, argparse, datetime
 
 def execute(args):
     process = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True, cwd='/')
@@ -19,22 +19,60 @@ def execute_or_exit(args):
         print "stdout:", stdoutdata
         print "stderr:", stderrdata
         sys.exit(1)
-    return stdoutdata
+    return stdoutdata, stderrdata
 
-def zfs_list():
+def execute_or_warning(args):
+    returncode, stdoutdata, stderrdata = execute(args)
+    if stdoutdata != '' or stderrdata !='':
+        print "execute(", args,") failed"
+        print "returncode:", returncode
+        print "stdout:", stdoutdata
+        print "stderr:", stderrdata
+
+def zfs_list_datasets():
     args = 'zfs', 'list', '-H', '-o', 'name,mountpoint'
-    stdoutdata = execute_or_exit(args)
+    stdoutdata, stderrdata = execute_or_exit(args)
     lines = stdoutdata.split('\n')
-    datasets = dict()
+    zfs = dict()
     for line in lines:
         if line == '':
             continue
         name, mountpoint = line.split('\t')
-        datasets[mountpoint] = name
-    return datasets
+        zfs[mountpoint] = name
+    return zfs
+
+def zfs_list_snapshots(dataset):
+    args = 'zfs', 'list', '-t', 'snap', '-H', '-o', 'name'
+    stdoutdata, stderrdata = execute_or_exit(args)
+    snapshots = []
+    for line in stdoutdata.split('\n'):
+        if line.startswith(dataset):
+            snapshots.append(line)
+    return sorted(snapshots, reverse=True)
+
+def create_snapshot(dataset):
+    args = 'zfs', 'snapshot', dataset + '@' + datetime.datetime.now().strftime('autobackup.%Y-%m-%d.%H:%M:%S')
+    execute_or_exit(args)
+
+def delete_snapshot(snapshot):
+    args = 'zfs', 'destroy', snapshot
+    execute_or_exit(args)
+
+def delete_old_snapshots(dataset, save):
+    for snapshot in zfs_list_snapshots(dataset)[save:]:
+        delete_snapshot(snapshot)
+
+def rsync(src_host, src_dir, dest_dir):
+    args = 'rsync', '-aqH', '--exclude', '/dev/**', '--exclude', '/proc/**', '--exclude', '/sys/**', \
+        '--exclude', '/run/**', '--exclude', '/tmp/**', '--exclude', '/vz/**', '--delete-during', \
+        '--delete-excluded', '--ignore-errors', '--force', '--numeric-ids', '--timeout=60', \
+        src_host+':'+src_dir, dest_dir
+    execute_or_warning(args)
 
 def raw_backup(host, dataset, mountpoint, save):
-    pass
+    rsync(host, '/', mountpoint)
+    create_snapshot(dataset)
+    delete_old_snapshots(dataset, save)
 
 def main():
     parser = argparse.ArgumentParser(prog='autobackup')
@@ -46,13 +84,13 @@ def main():
     if args.save < 1 or args.save > 365:
         raise ValueError("bad --save value, must be between 1 and 365")
     args.dest = os.path.abspath(args.dest)
-    datasets = zfs_list()
-    if args.dest not in datasets:
+    zfs = zfs_list_datasets()
+    if args.dest not in zfs:
         raise ValueError("bad --dest value, dataset mountpoint must exists")
     if args.type == 'raw':
-        raw_backup(host=args.host, dataset=datasets[args.dest], mountpoint=args.dest, save=args.save)
+        raw_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     elif args.type == 'ovz':
-        ovz_backup(host=args.host, dataset=datasets[args.dest], mountpoint=args.dest, save=args.save)
+        ovz_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     else:
         raise ValueError("unexpected --type value, must be 'raw' or 'ovz'")
 
