@@ -5,15 +5,15 @@
  # /opt/autobackup/autobackup --host=10.0.2.5 --type=raw --dest=/tank/backup/test --save=30 
 """
 
-import sys, os, os.path, subprocess, argparse, datetime, uuid
+import sys, os, os.path, subprocess, argparse, datetime, re, shutil
 
-def execute(args):
+def execute_process(*args):
     process = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True, cwd='/')
     stdoutdata, stderrdata = process.communicate()
     return process.returncode, stdoutdata, stderrdata
 
-def execute_or_exit(args):
-    returncode, stdoutdata, stderrdata = execute(args)
+def execute_or_exit(*args):
+    returncode, stdoutdata, stderrdata = execute_process(*args)
     if returncode != 0:
         print "fatal error: execute(", args,") failed"
         print "returncode:", returncode
@@ -22,17 +22,28 @@ def execute_or_exit(args):
         sys.exit(1)
     return stdoutdata, stderrdata
 
-def execute_or_warning(args):
-    returncode, stdoutdata, stderrdata = execute(args)
+def execute_or_warning(*args):
+    returncode, stdoutdata, stderrdata = execute_process(*args)
     if stdoutdata != '' or stderrdata !='':
         print "execute(", args,") failed"
         print "returncode:", returncode
         print "stdout:", stdoutdata
         print "stderr:", stderrdata
 
+def execute(*args):
+    returncode, stdoutdata, stderrdata = execute_process(*args)
+    if returncode != 0 or stdoutdata != '' or stderrdata !='':
+        print "fatal error: execute(", args,") failed"
+        print "returncode:", returncode
+        print "stdout:", stdoutdata
+        print "stderr:", stderrdata
+        sys.exit(1)
+
+#######################################################################################################################
+
 def zfs_list_datasets():
     args = 'zfs', 'list', '-H', '-o', 'name,mountpoint'
-    stdoutdata, stderrdata = execute_or_exit(args)
+    stdoutdata, stderrdata = execute_or_exit(*args)
     zfs = dict()
     for line in stdoutdata.split('\n'):
         if line == '':
@@ -43,7 +54,7 @@ def zfs_list_datasets():
 
 def zfs_list_snapshots(dataset):
     args = 'zfs', 'list', '-t', 'snap', '-H', '-o', 'name'
-    stdoutdata, stderrdata = execute_or_exit(args)
+    stdoutdata, stderrdata = execute_or_exit(*args)
     prefix = dataset + '@'
     snapshots = list()
     for line in stdoutdata.split('\n'):
@@ -51,39 +62,72 @@ def zfs_list_snapshots(dataset):
             snapshots.append(line)
     return sorted(snapshots, reverse=True)
 
-def create_snapshot(dataset):
-    args = 'zfs', 'snapshot', dataset + '@' + datetime.datetime.now().strftime('autobackup.%Y-%m-%d.%H:%M:%S')
-    execute_or_exit(args)
+def zfs_create_snapshot(dataset):
+    execute('zfs', 'snapshot', dataset + '@' + datetime.datetime.now().strftime('autobackup.%Y-%m-%d.%H:%M:%S'))
 
-def delete_snapshot(snapshot):
-    args = 'zfs', 'destroy', snapshot
-    execute_or_exit(args)
+def zfs_delete_snapshot(snapshot):
+    execute('zfs', 'destroy', snapshot)
 
-def delete_old_snapshots(dataset, save):
+def zfs_delete_old_snapshots(dataset, save):
     for snapshot in zfs_list_snapshots(dataset)[save:]:
-        delete_snapshot(snapshot)
+        zfs_delete_snapshot(snapshot)
 
-def list_containers(host):
-    args = 'ssh', host, 'vzlist', '-a', '-H', '-o', 'uuid,name'
-    stdoutdata, stderrdata = execute_or_exit(args)
+#######################################################################################################################
+
+def prlctl_list_containers(host):
+    args = 'ssh', host, 'prlctl', 'list', '-a', '-H', '-o', 'uuid,name', '--vmtype', 'ct'
+    stdoutdata, stderrdata = execute_or_exit(*args)
     containers = dict()
     for line in stdoutdata.split('\n'):
         if line == '':
             continue
-        ctid = line[0:36]
-        name = line[36:].strip()
+        ctid = line[1:37]
+        name = line[38:].strip()
         containers[ctid]=name
     return containers
 
+def prlctl_get_disk_descriptor_xml(host, ctid):
+    args = 'ssh', host, 'cat', '/etc/vz/conf/' + ctid + '.conf'
+    stdoutdata, stderrdata = execute_or_exit(*args)
+    for line in stdoutdata.split('\n'):
+        match = re.match(r'^\s*VE_PRIVATE\s*=\s*"?(.+?)"?\s*$', line)
+        if match:
+            ve_private = match.group(1)
+            ve_private = ve_private.replace('$VEID', ctid)
+            ve_private = os.path.abspath(ve_private)
+            disk_descriptor_xml = os.path.join(ve_private,'root.hdd/DiskDescriptor.xml')
+            return disk_descriptor_xml
+    raise ValueError(stdoutdata)
+
+def prlctl_create_snapshot(host, ctid):
+    args = 'ssh', host, 'prlctl', 'snapshot', '{' + ctid + '}'
+    stdoutdata, stderrdata = execute_or_exit(*args)
+    for line in stdoutdata.split('\n'):
+        match = re.search(r'\{(\S+)\}', line)
+        if match:
+            snid = match.group(1)
+            return snid
+    raise ValueError(stdoutdata)
+
+#######################################################################################################################
+
 def prepare_local_dirs(by_ctid_path, by_name_path):
-    def makedirs(path):
-        try:
-            os.makedirs(path)
-        except OSError:
-            pass
-    makedirs(by_ctid_path)
-    makedirs(os.path.dirname(by_name_path))
-    os.symlink(by_ctid_path, by_name_path)
+    try:
+        os.makedirs(by_ctid_path)
+    except OSError:
+        pass
+    try:
+        os.makedirs(os.path.dirname(by_name_path))
+    except OSError:
+        pass
+    try:
+        os.remove(by_name_path)
+    except OSError:
+        pass
+    try:
+        os.symlink(by_ctid_path, by_name_path)
+    except OSError:
+        pass
 
 def backup_hardware_node(host, mountpoint):
     by_ctid_path = os.path.join(mountpoint,'by-ctid', '0')
@@ -92,37 +136,65 @@ def backup_hardware_node(host, mountpoint):
     rsync(host, '/', by_ctid_path)
 
 def backup_container(host, ctid, name, mountpoint):
-    snid = str(uuid.uuid4())
+    """
+        http://openvz.livejournal.com/44508.html
+        https://openvz.org/Ploop/Backup 
+    """
+    #snid = str(uuid.uuid4())
+    snid = prlctl_create_snapshot(host, ctid)
     path = os.path.join('/tmp/autobackup', snid)
     by_ctid_path = os.path.join(mountpoint,'by-ctid', ctid)
     by_name_path = os.path.join(mountpoint,'by-name', name)
-    execute_or_exit(['ssh', host, 'mkdir', '-p', path])
-    execute_or_exit(['ssh', host, 'vzctl', 'snapshot', ctid, '--id', snid])
-    execute_or_exit(['ssh', host, 'vzctl', 'snapshot-mount', ctid, '--id', snid, '--target', path])
     prepare_local_dirs(by_ctid_path, by_name_path)
+    disk_descriptor_xml = prlctl_get_disk_descriptor_xml(host, ctid)
+    execute('ssh', host, 'mkdir', '-p', path)
+    #execute_or_exit('ssh', host, 'ploop', 'snapshot', '-u', '{' + snid + '}', disk_descriptor_xml)
+    #execute_or_exit('ssh', host, 'ploop', 'mount', '-r', '-m', path, '-u', '{' + snid + '}', disk_descriptor_xml)
+    execute_or_exit('ssh', host, 'vzctl', 'snapshot-mount', '{' + ctid + '}', '--id', '{' + snid + '}', '--target', path)
     rsync(host, path+'/', by_ctid_path)
-    execute_or_exit(['ssh', host, 'vzctl', 'snapshot-umount', ctid, '--id', snid])
-    execute_or_exit(['ssh', host, 'vzctl', 'snapshot-delete', ctid, '--id', snid])
-    execute_or_exit(['ssh', host, 'rmdir', path])
+    execute_or_exit('ssh', host, 'ploop', 'umount', '-m', path)
+    execute_or_exit('ssh', host, 'ploop', 'snapshot-delete', '-u', '{' + snid + '}', disk_descriptor_xml)
+    execute('ssh', host, 'rmdir', path)
+
+def delete_old_container_backups(containers, mountpoint):
+    containers['0'] = 'hardware-node'
+    by_ctid_base = os.path.join(mountpoint,'by-ctid')
+    by_name_base = os.path.join(mountpoint,'by-name')
+    ctid_list = os.listdir(by_ctid_base)
+    name_list = os.listdir(by_name_base)
+    for ctid in ctid_list:
+        if not ctid in containers:
+            shutil.rmtree(os.path.join(by_ctid_base, ctid), ignore_errors=True)
+    name_set = set(name_list)
+    for ctid, name in containers.items():
+        if name in name_set:
+            name_set.remove(name)
+    for name in name_set:
+        try:
+            os.remove(os.path.join(by_name_base, name))
+        except OSError:
+            pass
 
 def rsync(src_host, src_dir, dest_dir):
     args = 'rsync', '-aqH', '--exclude', '/dev/**', '--exclude', '/proc/**', '--exclude', '/sys/**', \
         '--exclude', '/run/**', '--exclude', '/tmp/**', '--exclude', '/vz/**', '--delete-during', \
         '--delete-excluded', '--ignore-errors', '--force', '--numeric-ids', '--timeout=60', \
         src_host+':'+src_dir, dest_dir
-    execute_or_warning(args)
+    execute_or_warning(*args)
 
 def raw_backup(host, dataset, mountpoint, save):
     rsync(host, '/', mountpoint)
-    create_snapshot(dataset)
-    delete_old_snapshots(dataset, save)
+    zfs_create_snapshot(dataset)
+    zfs_delete_old_snapshots(dataset, save)
 
 def ovz_backup(host, dataset, mountpoint, save):
-    for ctid, name in list_containers(host).items():
+    containers = prlctl_list_containers(host)
+    for ctid, name in containers.items():
         backup_container(host, ctid, name, mountpoint)
     backup_hardware_node(host, mountpoint)
-    create_snapshot(dataset)
-    delete_old_snapshots(dataset, save)
+    delete_old_container_backups(containers, mountpoint)
+    zfs_create_snapshot(dataset)
+    zfs_delete_old_snapshots(dataset, save)
 
 def main():
     parser = argparse.ArgumentParser(prog='autobackup')
@@ -146,41 +218,4 @@ def main():
 
 if __name__=="__main__":
     main()
-
-"""
-
-https://openvz.org/Ploop/Backup
-
-File-based backup
-
-Assuming you have a running container identified by $CTID. The following needs to be done:
-
-# Known snapshot ID
-ID=$(uuidgen)
-
-# Directory used to mount a snapshot
-MNTDIR=./mnt
-mkdir $MNTDIR
-
-# Take a snapshot without suspending a CT and saving its config
-vzctl snapshot $CTID --id $ID --skip-suspend --skip-config
-
-# Mount the snapshot taken
-vzctl snapshot-mount $CTID --id $ID --target $MNTDIR
-
-# Perform a backup using your favorite backup tool
-# (tar is just an example)
-tar cf backup.tar $MNTDIR
-
-# tar with compression examples, see man page of tar for more options
-# tar cfJ backup.tar.xz $MNTDIR
-# tar cfz backup.tar.gz $MNTDIR
-
-# Unmount the snapshot
-vzctl snapshot-umount $CTID --id $ID
-
-# Delete (merge) the snapshot
-vzctl snapshot-delete $CTID --id $ID
-
-"""
 
