@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 """ 
- # /opt/autobackup/autobackup --host=10.0.2.5 --type=ovz --dest=/tank/backup/10.0.2.5 --save=30 
+ # /opt/autobackup/autobackup --host=10.0.2.5 --type=vz7 --dest=/tank/backup/10.0.2.5 --save=30 
  # /opt/autobackup/autobackup --host=10.0.2.5 --type=raw --dest=/tank/backup/test --save=30 
 """
 
@@ -86,7 +86,7 @@ def prlctl_list_containers(host):
         containers[ctid]=name
     return containers
 
-def prlctl_get_disk_descriptor_xml(host, ctid):
+def prlctl_get_full_path_to_hdd(host, ctid):
     args = 'ssh', host, 'cat', '/etc/vz/conf/' + ctid + '.conf'
     stdoutdata, stderrdata = execute_or_exit(*args)
     for line in stdoutdata.split('\n'):
@@ -95,8 +95,9 @@ def prlctl_get_disk_descriptor_xml(host, ctid):
             ve_private = match.group(1)
             ve_private = ve_private.replace('$VEID', ctid)
             ve_private = os.path.abspath(ve_private)
-            disk_descriptor_xml = os.path.join(ve_private,'root.hdd/DiskDescriptor.xml')
-            return disk_descriptor_xml
+            #disk_descriptor_xml = os.path.join(ve_private,'root.hdd/DiskDescriptor.xml')
+            full_path_to_hdd = os.path.join(ve_private,'root.hdd')
+            return full_path_to_hdd
     raise ValueError(stdoutdata)
 
 def prlctl_create_snapshot(host, ctid):
@@ -111,29 +112,16 @@ def prlctl_create_snapshot(host, ctid):
 
 #######################################################################################################################
 
-def prepare_local_dirs(by_ctid_path, by_name_path):
+def create_local_dir(local_dir):
     try:
-        os.makedirs(by_ctid_path)
-    except OSError:
-        pass
-    try:
-        os.makedirs(os.path.dirname(by_name_path))
-    except OSError:
-        pass
-    try:
-        os.remove(by_name_path)
-    except OSError:
-        pass
-    try:
-        os.symlink(by_ctid_path, by_name_path)
+        os.makedirs(local_dir)
     except OSError:
         pass
 
 def backup_hardware_node(host, mountpoint):
-    by_ctid_path = os.path.join(mountpoint,'by-ctid', '0')
-    by_name_path = os.path.join(mountpoint,'by-name', 'hardware-node')
-    prepare_local_dirs(by_ctid_path, by_name_path)
-    rsync(host, '/', by_ctid_path)
+    local_dir = os.path.join(mountpoint,'hardware-node')
+    create_local_dir(local_dir)
+    rsync(host, '/etc', local_dir)
 
 def backup_container(host, ctid, name, mountpoint):
     """
@@ -143,43 +131,34 @@ def backup_container(host, ctid, name, mountpoint):
     #snid = str(uuid.uuid4())
     snid = prlctl_create_snapshot(host, ctid)
     path = os.path.join('/tmp/autobackup', snid)
-    by_ctid_path = os.path.join(mountpoint,'by-ctid', ctid)
-    by_name_path = os.path.join(mountpoint,'by-name', name)
-    prepare_local_dirs(by_ctid_path, by_name_path)
-    disk_descriptor_xml = prlctl_get_disk_descriptor_xml(host, ctid)
+    local_dir = os.path.join(mountpoint, name)
+    create_local_dir(local_dir)
+    #disk_descriptor_xml = prlctl_get_disk_descriptor_xml(host, ctid)
     execute('ssh', host, 'mkdir', '-p', path)
     #execute_or_exit('ssh', host, 'ploop', 'snapshot', '-u', '{' + snid + '}', disk_descriptor_xml)
     #execute_or_exit('ssh', host, 'ploop', 'mount', '-r', '-m', path, '-u', '{' + snid + '}', disk_descriptor_xml)
     execute_or_exit('ssh', host, 'vzctl', 'snapshot-mount', '{' + ctid + '}', '--id', '{' + snid + '}', '--target', path)
-    rsync(host, path+'/', by_ctid_path)
+    rsync(host, path + '/', local_dir)
     execute_or_exit('ssh', host, 'ploop', 'umount', '-m', path)
-    execute_or_exit('ssh', host, 'ploop', 'snapshot-delete', '-u', '{' + snid + '}', disk_descriptor_xml)
+    #execute_or_exit('ssh', host, 'ploop', 'snapshot-delete', '-u', '{' + snid + '}', disk_descriptor_xml)
+    execute_or_exit('ssh', host, 'prlctl', 'snapshot-delete', '{' + ctid + '}', '--id', '{' + snid + '}')
     execute('ssh', host, 'rmdir', path)
+    # compact hdd ploop image after backup
+    #full_path_to_hdd = prlctl_get_full_path_to_hdd(host, ctid)
+    #execute_or_exit('ssh', host, 'prl_disk_tool', 'compact', '--hdd', full_path_to_hdd)
 
-def delete_old_container_backups(containers, mountpoint):
+def delete_old_backups(containers, mountpoint):
     containers['0'] = 'hardware-node'
-    by_ctid_base = os.path.join(mountpoint,'by-ctid')
-    by_name_base = os.path.join(mountpoint,'by-name')
-    ctid_list = os.listdir(by_ctid_base)
-    name_list = os.listdir(by_name_base)
-    for ctid in ctid_list:
-        if not ctid in containers:
-            shutil.rmtree(os.path.join(by_ctid_base, ctid), ignore_errors=True)
-    name_set = set(name_list)
-    for ctid, name in containers.items():
-        if name in name_set:
-            name_set.remove(name)
-    for name in name_set:
-        try:
-            os.remove(os.path.join(by_name_base, name))
-        except OSError:
-            pass
+    backups = os.listdir(mountpoint)
+    names = set(containers.values())
+    for backup in backups:
+        if backup not in names:
+            shutil.rmtree(os.path.join(mountpoint, backup), ignore_errors=True)
 
 def rsync(src_host, src_dir, dest_dir):
     args = 'rsync', '-aqH', '--exclude', '/dev/**', '--exclude', '/proc/**', '--exclude', '/sys/**', \
-        '--exclude', '/run/**', '--exclude', '/tmp/**', '--exclude', '/vz/**', '--delete-during', \
-        '--delete-excluded', '--ignore-errors', '--force', '--numeric-ids', '--timeout=60', \
-        src_host+':'+src_dir, dest_dir
+        '--exclude', '/run/**', '--exclude', '/tmp/**', '--delete-during', '--delete-excluded', \
+        '--ignore-errors', '--force', '--numeric-ids', '--timeout=60', src_host+':'+src_dir, dest_dir
     execute_or_warning(*args)
 
 def raw_backup(host, dataset, mountpoint, save):
@@ -187,19 +166,22 @@ def raw_backup(host, dataset, mountpoint, save):
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
 
-def ovz_backup(host, dataset, mountpoint, save):
+def vz7_backup(host, dataset, mountpoint, save):
     containers = prlctl_list_containers(host)
     for ctid, name in containers.items():
         backup_container(host, ctid, name, mountpoint)
+    delete_old_backups(containers, mountpoint)
+    # TODO check what ploop snapshot list is empty
     backup_hardware_node(host, mountpoint)
-    delete_old_container_backups(containers, mountpoint)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
+    # compact all disk images
+    execute_or_exit('ssh', host, 'pcompact')
 
 def main():
     parser = argparse.ArgumentParser(prog='autobackup')
     parser.add_argument('--host', required=True, help="remote host to backup", metavar='HOST')
-    parser.add_argument('--type', required=True, help="remote host type", choices=['raw', 'ovz'])
+    parser.add_argument('--type', required=True, help="remote host type", choices=['raw', 'vz7'])
     parser.add_argument('--dest', required=True, help="backup destination on local ZFS", metavar='PATH')
     parser.add_argument('--save', required=True, help="count of saved backup snapshots", type=int, metavar='COUNT')
     args = parser.parse_args()
@@ -211,10 +193,10 @@ def main():
         raise ValueError("bad --dest value, dataset mountpoint must exists")
     if args.type == 'raw':
         raw_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
-    elif args.type == 'ovz':
-        ovz_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
+    elif args.type == 'vz7':
+        vz7_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     else:
-        raise ValueError("unexpected --type value, must be 'raw' or 'ovz'")
+        raise ValueError("unexpected --type value, must be 'raw' or 'vz7'")
 
 if __name__=="__main__":
     main()
