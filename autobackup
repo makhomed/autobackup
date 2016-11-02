@@ -86,6 +86,15 @@ def prlctl_list_containers(host):
         containers[ctid]=name
     return containers
 
+def prlctl_list_snapshots(host, containers):
+    for ctid in containers:
+        args = 'ssh', host, 'prlctl', 'snapshot-list', '{' + ctid + '}', '-H'
+        stdoutdata, stderrdata = execute_or_exit(*args)
+        stdout = stdoutdata.strip()
+        if stdout != '':
+            name = containers[ctid]
+            print "for container %s detected active snapshot %s\n" % (name, stdout)
+
 def prlctl_get_full_path_to_hdd(host, ctid):
     args = 'ssh', host, 'cat', '/etc/vz/conf/' + ctid + '.conf'
     stdoutdata, stderrdata = execute_or_exit(*args)
@@ -148,9 +157,9 @@ def backup_container(host, ctid, name, mountpoint):
     #execute_or_exit('ssh', host, 'prl_disk_tool', 'compact', '--hdd', full_path_to_hdd)
 
 def delete_old_backups(containers, mountpoint):
-    containers['0'] = 'hardware-node'
-    backups = os.listdir(mountpoint)
     names = set(containers.values())
+    names.add('hardware-node')
+    backups = os.listdir(mountpoint)
     for backup in backups:
         if backup not in names:
             shutil.rmtree(os.path.join(mountpoint, backup), ignore_errors=True)
@@ -171,10 +180,11 @@ def vz7_backup(host, dataset, mountpoint, save):
     for ctid, name in containers.items():
         backup_container(host, ctid, name, mountpoint)
     delete_old_backups(containers, mountpoint)
-    # TODO check what ploop snapshot list is empty
     backup_hardware_node(host, mountpoint)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
+    # check for active container snapshots
+    prlctl_list_snapshots(host, containers)
     # compact all disk images
     execute_or_exit('ssh', host, 'pcompact')
 
