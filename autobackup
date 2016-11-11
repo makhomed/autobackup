@@ -190,11 +190,13 @@ def main():
     parser.add_argument('--save', required=True, help="count of saved backup snapshots", metavar='COUNT', type=int)
     args = parser.parse_args()
     if args.save < 1 or args.save > 90:
-        raise ValueError("bad --save value, must be between 1 and 90")
+        print "unexpected --save value, it must be between 1 and 90"
+        sys.exit(1)
     args.dest = os.path.abspath(args.dest)
     zfs = zfs_list_datasets()
     if args.dest not in zfs:
-        raise ValueError("bad --dest value, dataset mountpoint must exists")
+        print "unexpected --dest value, it must be dedicated ZFS filesystem mountpoint"
+        sys.exit(1)
     if args.type == 'etc':
         etc_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     elif args.type == 'raw':
@@ -202,7 +204,8 @@ def main():
     elif args.type == 'ovz':
         ovz_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     else:
-        raise ValueError("unexpected --type value, must be 'etc', 'raw' or 'ovz'")
+        print "unexpected --type value, it must be 'etc', 'raw' or 'ovz'"
+        sys.exit(1)
 
 if __name__=="__main__":
     main()
