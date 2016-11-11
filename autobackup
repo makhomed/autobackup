@@ -6,7 +6,7 @@
  # /opt/autobackup/autobackup --host=10.0.2.6 --type=ovz --dest=/tank/backup/10.0.2.6 --save=30 
 """
 
-import sys, os, os.path, subprocess, argparse, datetime, re, shutil, uuid
+import sys, os, os.path, subprocess, argparse, datetime, re, shutil, uuid, syslog
 
 #######################################################################################################################
 
@@ -144,17 +144,27 @@ def rsync(src_host, src_dir, dest_dir):
 
 #######################################################################################################################
 
-def raw_backup(host, dataset, mountpoint, save):
-    rsync(host, '/', mountpoint)
-    zfs_create_snapshot(dataset)
-    zfs_delete_old_snapshots(dataset, save)
-
 def etc_backup(host, dataset, mountpoint, save):
+    start = datetime.datetime.now()
+    syslog.syslog("etc " + host + " started")
     rsync(host, '/etc', mountpoint)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
+    end = datetime.datetime.now()
+    syslog.syslog("etc " + host + " finished, " + str(end-start).split('.')[0])
+    
+def raw_backup(host, dataset, mountpoint, save):
+    start = datetime.datetime.now()
+    syslog.syslog("raw " + host + " started")
+    rsync(host, '/', mountpoint)
+    zfs_create_snapshot(dataset)
+    zfs_delete_old_snapshots(dataset, save)
+    end = datetime.datetime.now()
+    syslog.syslog("raw " + host + " finished, " + str(end-start).split('.')[0])
 
 def ovz_backup(host, dataset, mountpoint, save):
+    start = datetime.datetime.now()
+    syslog.syslog("ovz " + host + " started")
     containers = vzlist(host)
     for ctid, layout in containers.items():
         if layout == 'ploop':
@@ -167,6 +177,8 @@ def ovz_backup(host, dataset, mountpoint, save):
     zfs_delete_old_snapshots(dataset, save)
     print_ploop_containers_with_snapshots(host, containers)
     compact_all_ploop_containers(host, containers)
+    end = datetime.datetime.now()
+    syslog.syslog("ovz " + host + " finished, " + str(end-start).split('.')[0])
 
 #######################################################################################################################
 
