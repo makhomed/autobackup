@@ -139,7 +139,7 @@ def backup_hardware_node(host, mountpoint):
 def rsync(src_host, src_dir, dest_dir):
     args = 'rsync', '-aqH', '--exclude', '/dev/**', '--exclude', '/proc/**', '--exclude', '/sys/**', \
         '--exclude', '/run/**', '--exclude', '/tmp/**', '--delete-during', '--delete-excluded', \
-        '--ignore-errors', '--force', '--numeric-ids', '--timeout=60', src_host+':'+src_dir, dest_dir
+        '--ignore-errors', '--force', '--numeric-ids', '--timeout=600', src_host+':'+src_dir, dest_dir
     execute_or_warning(*args)
 
 #######################################################################################################################
