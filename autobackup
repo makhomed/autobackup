@@ -1,10 +1,15 @@
 #!/usr/bin/python
 
 """ 
- # /opt/autobackup/autobackup --host=10.0.2.6 --type=etc --dest=/tank/backup/test-etc --save=30 
- # /opt/autobackup/autobackup --host=10.0.2.6 --type=raw --dest=/tank/backup/test-raw --save=30 
- # /opt/autobackup/autobackup --host=10.0.2.6 --type=ovz --dest=/tank/backup/10.0.2.6 --save=30 
+ # /opt/autobackup/autobackup --host=example.com --type=etc --dest=/tank/backup/example.com --save=30 
+ # /opt/autobackup/autobackup --host=example.net --type=raw --dest=/tank/backup/example.net --save=30 
+ # /opt/autobackup/autobackup --host=example.org --type=ovz --dest=/tank/backup/example.org --save=30 
 """
+__author__ = "Gena Makhomed"
+__contact__ = "https://github.com/makhomed/autobackup/"
+__license__ = "GPLv3"
+__version__ = "1.0.0"
+__date__ = "2017-09-27"
 
 import sys, os, os.path, subprocess, argparse, datetime, re, shutil, uuid, syslog
 
@@ -119,7 +124,8 @@ def backup_ploop_container(host, ctid, mountpoint):
     execute_or_exit('ssh', host, 'vzctl', 'snapshot-mount', ctid, '--id', snid, '--target', path )
     local_dir = os.path.join(mountpoint, ctid)
     create_local_dir(local_dir)
-    rsync(host, path + '/', local_dir)
+    extra_excludes = get_excludes_from_remote_host(host, path, 'container ' + ctid + ' on hardware-node ' + host)
+    rsync(host, path + '/', local_dir, extra_excludes)
     execute_or_exit('ssh', host, 'vzctl', 'snapshot-umount', ctid, '--id', snid )
     execute_or_exit('ssh', host, 'vzctl', 'snapshot-delete', ctid, '--id', snid )
     execute('ssh', host, 'rmdir', path)
@@ -134,20 +140,74 @@ def delete_orphan_backups(containers, mountpoint):
 def backup_hardware_node(host, mountpoint):
     local_dir = os.path.join(mountpoint, 'hardware-node')
     create_local_dir(local_dir)
-    rsync(host, '/etc', local_dir)
+    extra_excludes = get_excludes_from_remote_host(host, None, 'hardware-node ' + host)
+    rsync(host, '/etc', local_dir, extra_excludes)
 
-def rsync(src_host, src_dir, dest_dir):
-    args = 'rsync', '-aqH', '--exclude', '/dev/**', '--exclude', '/proc/**', '--exclude', '/sys/**', \
-        '--exclude', '/run/**', '--exclude', '/tmp/**', '--delete-during', '--delete-excluded', \
-        '--ignore-errors', '--force', '--numeric-ids', '--timeout=600', src_host+':'+src_dir, dest_dir
+built_in_excludes_config = """
+/dev/**
+/proc/**
+/sys/**
+/run/**
+/tmp/**
+/var/cache/**
+/var/tmp/**
+"""
+
+def rsync(src_host, src_dir, dest_dir, extra_excludes):
+    args_prefix = 'rsync', '-aqH'
+    args_suffix = '--delete-during', '--delete-excluded', '--ignore-errors', \
+    '--force', '--numeric-ids', '--timeout=600', src_host+':'+src_dir, dest_dir
+    built_in_excludes = parse_exclude_conf(built_in_excludes_config, 'built-in excludes')
+    excludes = built_in_excludes + extra_excludes
+    args_excludes = list()
+    for entry in excludes:
+        args_excludes.append('--exclude')
+        args_excludes.append(entry)
+    args = list(args_prefix) + args_excludes + list(args_suffix)
     execute_or_warning(*args)
+
+#######################################################################################################################
+
+def os_path_concat(prefix, absolute_path):
+    if absolute_path[0] != '/':
+        raise ValueError('unexpected value of absolute_path: %s' % absolute_path)
+    elif prefix is None:
+        return absolute_path
+    elif prefix[0] != '/':
+        raise ValueError('unexpected value of prefix: %s' % prefix)
+    else:
+        return os.path.join(prefix, absolute_path[1:])
+
+def parse_exclude_conf(config, description):
+    excludes = list()
+    for line in config.split('\n'):
+        line = line.strip()
+        if line == '':
+            continue
+        elif line[0] == '#':
+            continue
+        elif line[0] != '/':
+            print 'WARNING: unexpected excludes.conf line "%s" from %s' % (line, description)
+        else:
+            excludes.append(line)
+    return excludes
+
+exclude_conf_absolute_path = '/etc/autobackup/exclude.conf'
+
+def get_excludes_from_remote_host(host, prefix, description):
+    exclude_conf = os_path_concat(prefix, exclude_conf_absolute_path)
+    command = '"if [ -f '+exclude_conf+' ] ; then cat '+exclude_conf+' ; fi"'
+    args = 'ssh', host, '/bin/sh', '-c', command
+    stdoutdata, stderrdata = execute_or_exit(*args)
+    return parse_exclude_conf(stdoutdata, description)
 
 #######################################################################################################################
 
 def etc_backup(host, dataset, mountpoint, save):
     start = datetime.datetime.now()
     syslog.syslog("etc " + host + " started")
-    rsync(host, '/etc', mountpoint)
+    extra_excludes = get_excludes_from_remote_host(host, None, 'host ' + host)
+    rsync(host, '/etc', mountpoint, extra_excludes)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
     end = datetime.datetime.now()
@@ -156,7 +216,8 @@ def etc_backup(host, dataset, mountpoint, save):
 def raw_backup(host, dataset, mountpoint, save):
     start = datetime.datetime.now()
     syslog.syslog("raw " + host + " started")
-    rsync(host, '/', mountpoint)
+    extra_excludes = get_excludes_from_remote_host(host, None, 'host ' + host)
+    rsync(host, '/', mountpoint, extra_excludes)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
     end = datetime.datetime.now()

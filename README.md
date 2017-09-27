@@ -16,7 +16,7 @@ optional arguments:
 examples:
 
 ```
- # /opt/autobackup/autobackup --host=10.0.2.6 --type=etc --dest=/tank/backup/test-etc --save=30
- # /opt/autobackup/autobackup --host=10.0.2.6 --type=raw --dest=/tank/backup/test-raw --save=30
- # /opt/autobackup/autobackup --host=10.0.2.6 --type=ovz --dest=/tank/backup/10.0.2.6 --save=30
+ # /opt/autobackup/autobackup --host=example.com --type=etc --dest=/tank/backup/example.com --save=30
+ # /opt/autobackup/autobackup --host=example.net --type=raw --dest=/tank/backup/example.net --save=30
+ # /opt/autobackup/autobackup --host=example.org --type=ovz --dest=/tank/backup/example.org --save=30
 ```
