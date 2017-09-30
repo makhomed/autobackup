@@ -8,8 +8,8 @@
 __author__ = "Gena Makhomed"
 __contact__ = "https://github.com/makhomed/autobackup/"
 __license__ = "GPLv3"
-__version__ = "1.0.0"
-__date__ = "2017-09-27"
+__version__ = "1.0.1"
+__date__ = "2017-09-30"
 
 import sys, os, os.path, subprocess, argparse, datetime, re, shutil, uuid, syslog
 
@@ -82,8 +82,8 @@ def zfs_delete_old_snapshots(dataset, save):
 
 #######################################################################################################################
 
-def vzlist(host):
-    args = 'ssh', host, 'vzlist', '-a', '-H', '-o', 'ctid,layout'
+def vzlist(host, port):
+    args = 'ssh', '-p', str(port), host, 'vzlist', '-a', '-H', '-o', 'ctid,layout'
     stdoutdata, stderrdata = execute_or_exit(*args)
     containers = dict()
     for line in stdoutdata.split('\n'):
@@ -93,19 +93,19 @@ def vzlist(host):
         containers[ctid]=layout
     return containers
 
-def print_ploop_containers_with_snapshots(host, containers):
+def print_ploop_containers_with_snapshots(host, port, containers):
     for ctid, layout in containers.items():
         if layout == 'ploop':
-            args = 'ssh', host, 'vzctl', 'snapshot-list', ctid, '-H'
+            args = 'ssh', '-p', str(port), host, 'vzctl', 'snapshot-list', ctid, '-H'
             stdoutdata, stderrdata = execute_or_exit(*args)
             stdout = stdoutdata.strip()
             if stdout != '':
                 print "container '%s' has active snapshot, can't compact it" % (ctid)
 
-def compact_all_ploop_containers(host, containers):
+def compact_all_ploop_containers(host, port, containers):
     for ctid, layout in containers.items():
         if layout == 'ploop':
-            execute_or_exit('ssh', host, 'vzctl', 'compact', ctid)
+            execute_or_exit('ssh', '-p', str(port), host, 'vzctl', 'compact', ctid)
 
 #######################################################################################################################
 
@@ -115,20 +115,20 @@ def create_local_dir(local_dir):
     except OSError: # File exists
         pass
 
-def backup_ploop_container(host, ctid, mountpoint):
+def backup_ploop_container(host, port, ctid, mountpoint):
     """ https://openvz.org/Ploop/Backup """
     snid = str(uuid.uuid4())
     path = os.path.join('/tmp/autobackup', snid)
-    execute('ssh', host, 'mkdir', '-p', path)
-    execute_or_exit('ssh', host, 'vzctl', 'snapshot', ctid, '--id', snid, '--skip-suspend', '--skip-config' )
-    execute_or_exit('ssh', host, 'vzctl', 'snapshot-mount', ctid, '--id', snid, '--target', path )
+    execute('ssh', '-p', str(port), host, 'mkdir', '-p', path)
+    execute_or_exit('ssh', '-p', str(port), host, 'vzctl', 'snapshot', ctid, '--id', snid, '--skip-suspend', '--skip-config' )
+    execute_or_exit('ssh', '-p', str(port), host, 'vzctl', 'snapshot-mount', ctid, '--id', snid, '--target', path )
     local_dir = os.path.join(mountpoint, ctid)
     create_local_dir(local_dir)
-    extra_excludes = get_excludes_from_remote_host(host, path, 'container ' + ctid + ' on hardware-node ' + host)
-    rsync(host, path + '/', local_dir, extra_excludes)
-    execute_or_exit('ssh', host, 'vzctl', 'snapshot-umount', ctid, '--id', snid )
-    execute_or_exit('ssh', host, 'vzctl', 'snapshot-delete', ctid, '--id', snid )
-    execute('ssh', host, 'rmdir', path)
+    extra_excludes = get_excludes_from_remote_host(host, port, path, 'container ' + ctid + ' on hardware-node ' + host + ':' + str(port))
+    rsync(host, port, path + '/', local_dir, extra_excludes)
+    execute_or_exit('ssh', '-p', str(port), host, 'vzctl', 'snapshot-umount', ctid, '--id', snid )
+    execute_or_exit('ssh', '-p', str(port), host, 'vzctl', 'snapshot-delete', ctid, '--id', snid )
+    execute('ssh', '-p', str(port), host, 'rmdir', path)
 
 def delete_orphan_backups(containers, mountpoint):
     save_dirs = set(containers.keys())
@@ -137,11 +137,11 @@ def delete_orphan_backups(containers, mountpoint):
         if backup not in save_dirs:
             shutil.rmtree(os.path.join(mountpoint, backup), ignore_errors=True)
 
-def backup_hardware_node(host, mountpoint):
+def backup_hardware_node(host, port, mountpoint):
     local_dir = os.path.join(mountpoint, 'hardware-node')
     create_local_dir(local_dir)
-    extra_excludes = get_excludes_from_remote_host(host, None, 'hardware-node ' + host)
-    rsync(host, '/etc', local_dir, extra_excludes)
+    extra_excludes = get_excludes_from_remote_host(host, port, None, 'hardware-node ' + host + ':' + str(port))
+    rsync(host, port, '/etc', local_dir, extra_excludes)
 
 built_in_excludes_config = """
 /dev/**
@@ -153,8 +153,8 @@ built_in_excludes_config = """
 /var/tmp/**
 """
 
-def rsync(src_host, src_dir, dest_dir, extra_excludes):
-    args_prefix = 'rsync', '-aqH'
+def rsync(src_host, src_port, src_dir, dest_dir, extra_excludes):
+    args_prefix = 'rsync', '-aqH', '-e', 'ssh -p ' + str(src_port) 
     args_suffix = '--delete-during', '--delete-excluded', '--ignore-errors', \
     '--force', '--numeric-ids', '--timeout=600', src_host+':'+src_dir, dest_dir
     built_in_excludes = parse_exclude_conf(built_in_excludes_config, 'built-in excludes')
@@ -194,78 +194,82 @@ def parse_exclude_conf(config, description):
 
 exclude_conf_absolute_path = '/etc/autobackup/exclude.conf'
 
-def get_excludes_from_remote_host(host, prefix, description):
+def get_excludes_from_remote_host(host, port, prefix, description):
     exclude_conf = os_path_concat(prefix, exclude_conf_absolute_path)
     command = '"if [ -f '+exclude_conf+' ] ; then cat '+exclude_conf+' ; fi"'
-    args = 'ssh', host, '/bin/sh', '-c', command
+    args = 'ssh', '-p', str(port), host, '/bin/sh', '-c', command
     stdoutdata, stderrdata = execute_or_exit(*args)
     return parse_exclude_conf(stdoutdata, description)
 
 #######################################################################################################################
 
-def etc_backup(host, dataset, mountpoint, save):
+def etc_backup(host, port, dataset, mountpoint, save):
     start = datetime.datetime.now()
-    syslog.syslog("etc " + host + " started")
-    extra_excludes = get_excludes_from_remote_host(host, None, 'host ' + host)
-    rsync(host, '/etc', mountpoint, extra_excludes)
+    syslog.syslog("etc " + host + ':' + str(port) + " started")
+    extra_excludes = get_excludes_from_remote_host(host, port, None, 'host ' + host + ':' + str(port))
+    rsync(host, port, '/etc', mountpoint, extra_excludes)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
     end = datetime.datetime.now()
-    syslog.syslog("etc " + host + " finished, " + str(end-start).split('.')[0])
+    syslog.syslog("etc " + host + ':' + str(port) + " finished, " + str(end-start).split('.')[0])
     
-def raw_backup(host, dataset, mountpoint, save):
+def raw_backup(host, port, dataset, mountpoint, save):
     start = datetime.datetime.now()
-    syslog.syslog("raw " + host + " started")
-    extra_excludes = get_excludes_from_remote_host(host, None, 'host ' + host)
-    rsync(host, '/', mountpoint, extra_excludes)
+    syslog.syslog("raw " + host + ':' + str(port) + " started")
+    extra_excludes = get_excludes_from_remote_host(host, port, None, 'host ' + host + ':' + str(port))
+    rsync(host, port, '/', mountpoint, extra_excludes)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
     end = datetime.datetime.now()
-    syslog.syslog("raw " + host + " finished, " + str(end-start).split('.')[0])
+    syslog.syslog("raw " + host + ':' + str(port) + " finished, " + str(end-start).split('.')[0])
 
-def ovz_backup(host, dataset, mountpoint, save):
+def ovz_backup(host, port, dataset, mountpoint, save):
     start = datetime.datetime.now()
-    syslog.syslog("ovz " + host + " started")
-    containers = vzlist(host)
+    syslog.syslog("ovz " + host + ':' + str(port) + " started")
+    containers = vzlist(host, port)
     for ctid, layout in containers.items():
         if layout == 'ploop':
-            backup_ploop_container(host, ctid, mountpoint)
+            backup_ploop_container(host, port, ctid, mountpoint)
         else:
-            print "container '%s' has unsupported layout type '%s', can't backup it" % ( ctid, layout )
-    backup_hardware_node(host, mountpoint)
+            print "container '%s' at %s:%s has unsupported layout type '%s', can't backup it" % ( ctid, host, str(port), layout )
+    backup_hardware_node(host, port, mountpoint)
     delete_orphan_backups(containers, mountpoint)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
-    print_ploop_containers_with_snapshots(host, containers)
-    compact_all_ploop_containers(host, containers)
+    print_ploop_containers_with_snapshots(host, port, containers)
+    compact_all_ploop_containers(host, port, containers)
     end = datetime.datetime.now()
-    syslog.syslog("ovz " + host + " finished, " + str(end-start).split('.')[0])
+    syslog.syslog("ovz " + host + ':' + str(port) + " finished, " + str(end-start).split('.')[0])
 
 #######################################################################################################################
 
 def main():
     parser = argparse.ArgumentParser(prog='autobackup')
-    parser.add_argument('--host', required=True, help="remote host to backup it on ZFS", metavar='HOST')
-    parser.add_argument('--type', required=True, help="remote host type: etc, raw, ovz", metavar='TYPE')
-    parser.add_argument('--dest', required=True, help="backup destination on local ZFS", metavar='PATH')
-    parser.add_argument('--save', required=True, help="count of saved backup snapshots", metavar='COUNT', type=int)
+    parser.add_argument('--host', required=True,  help="remote host to backup it on ZFS", metavar='HOST')
+    parser.add_argument('--port', required=False, help="remote port to backup it on ZFS", metavar='PORT', type=int, default=22)
+    parser.add_argument('--type', required=True,  help="remote host type: etc, raw, ovz", metavar='TYPE', choices=['etc', 'raw', 'ovz'])
+    parser.add_argument('--dest', required=True,  help="backup destination on local ZFS", metavar='PATH')
+    parser.add_argument('--save', required=True,  help="count of saved backup snapshots", metavar='COUNT', type=int)
     args = parser.parse_args()
+    if args.port < 1 or args.port > 65535:
+        print "unexpected --port value '%s', it must be between 1 and 65535" % str(args.port)
+        sys.exit(1)
     if args.save < 1 or args.save > 90:
-        print "unexpected --save value, it must be between 1 and 90"
+        print "unexpected --save value '%s', it must be between 1 and 90" % str(args.save)
         sys.exit(1)
     args.dest = os.path.abspath(args.dest)
     zfs = zfs_list_datasets()
     if args.dest not in zfs:
-        print "unexpected --dest value, it must be dedicated ZFS filesystem mountpoint"
+        print "unexpected --dest value '%s', it must be dedicated ZFS filesystem mountpoint" % args.dest
         sys.exit(1)
     if args.type == 'etc':
-        etc_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
+        etc_backup(host=args.host, port=args.port, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     elif args.type == 'raw':
-        raw_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
+        raw_backup(host=args.host, port=args.port, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     elif args.type == 'ovz':
-        ovz_backup(host=args.host, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
+        ovz_backup(host=args.host, port=args.port, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     else:
-        print "unexpected --type value, it must be 'etc', 'raw' or 'ovz'"
+        print "unexpected --type value '%s', it must be 'etc', 'raw' or 'ovz'" % args.type
         sys.exit(1)
 
 if __name__=="__main__":
