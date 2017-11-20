@@ -4,7 +4,7 @@ autobackup
 
 OpenVZ and raw backup via dedicated backup server with ZFS storage
 
-.. code-block:: bash
+.. code-block:: none
 
     # /opt/autobackup/autobackup --help
     usage: autobackup [-h] --host HOST [--port PORT] --type TYPE --dest PATH --save COUNT
@@ -20,7 +20,7 @@ OpenVZ and raw backup via dedicated backup server with ZFS storage
 Examples
 --------
 
-.. code-block:: bash
+.. code-block:: none
 
     # /opt/autobackup/autobackup --host=example.com --type=etc --dest=/tank/backup/example.com --save=30
     # /opt/autobackup/autobackup --host=example.net --type=raw --dest=/tank/backup/example.net --save=30
