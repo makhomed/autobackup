@@ -67,7 +67,7 @@ def execute(*args):
 
 def zfs_list_datasets():
     args = 'zfs', 'list', '-H', '-o', 'name,mountpoint'
-    stdoutdata, stderrdata = execute_or_exit(*args)
+    stdoutdata, dummy_stderrdata = execute_or_exit(*args)
     zfs = dict()
     for line in stdoutdata.split('\n'):
         if line == '':
@@ -79,7 +79,7 @@ def zfs_list_datasets():
 
 def zfs_list_snapshots(dataset):
     args = 'zfs', 'list', '-t', 'snap', '-H', '-o', 'name'
-    stdoutdata, stderrdata = execute_or_exit(*args)
+    stdoutdata, dummy_stderrdata = execute_or_exit(*args)
     prefix = dataset + '@'
     snapshots = list()
     for line in stdoutdata.split('\n'):
@@ -106,7 +106,7 @@ def zfs_delete_old_snapshots(dataset, save):
 
 def vzlist(host, port):
     args = 'ssh', '-p', str(port), host, 'vzlist', '-a', '-H', '-o', 'ctid,layout'
-    stdoutdata, stderrdata = execute_or_exit(*args)
+    stdoutdata, dummy_stderrdata = execute_or_exit(*args)
     containers = dict()
     for line in stdoutdata.split('\n'):
         if line == '':
@@ -116,14 +116,14 @@ def vzlist(host, port):
     return containers
 
 
-def print_ploop_containers_with_snapshots(host, port, containers):
+def print_containers_with_snapshots(host, port, containers):
     for ctid, layout in containers.items():
         if layout == 'ploop':
             args = 'ssh', '-p', str(port), host, 'vzctl', 'snapshot-list', ctid, '-H'
-            stdoutdata, stderrdata = execute_or_exit(*args)
+            stdoutdata, dummy_stderrdata = execute_or_exit(*args)
             stdout = stdoutdata.strip()
             if stdout != '':
-                print "container '%s' has active snapshot, can't compact it" % (ctid)
+                print "container '%s' has active ploop snapshot, can't compact it" % (ctid)
 
 
 def compact_all_ploop_containers(host, port, containers):
@@ -173,7 +173,7 @@ def backup_hardware_node(host, port, mountpoint):
     rsync(host, port, '/etc', local_dir, extra_excludes)
 
 
-built_in_excludes_config = """
+BUILT_IN_EXCLUDES_CONFIG = """
 /dev/**
 /proc/**
 /sys/**
@@ -185,10 +185,10 @@ built_in_excludes_config = """
 
 
 def rsync(src_host, src_port, src_dir, dest_dir, extra_excludes):
-    args_prefix = 'rsync', '-aqH', '-e', 'ssh -p ' + str(src_port)
+    args_prefix = 'rsync', '-aqH', '--no-compress', '-e', 'ssh -p ' + str(src_port)
     args_suffix = '--delete-during', '--delete-excluded', '--ignore-errors', \
-        '--force', '--numeric-ids', '--timeout=600', src_host+':'+src_dir, dest_dir
-    built_in_excludes = parse_exclude_conf(built_in_excludes_config, 'built-in excludes')
+        '--force', '--numeric-ids', '--timeout=3600', src_host + ':' + src_dir, dest_dir
+    built_in_excludes = parse_exclude_conf(BUILT_IN_EXCLUDES_CONFIG, 'built-in excludes')
     excludes = built_in_excludes + extra_excludes
     args_excludes = list()
     for entry in excludes:
@@ -227,14 +227,14 @@ def parse_exclude_conf(config, description):
     return excludes
 
 
-exclude_conf_absolute_path = '/etc/autobackup/exclude.conf'
+EXCLUDE_CONF_ABSOLUTE_PATH = '/etc/autobackup/exclude.conf'
 
 
 def get_excludes_from_remote_host(host, port, prefix, description):
-    exclude_conf = os_path_concat(prefix, exclude_conf_absolute_path)
-    command = '"if [ -f '+exclude_conf+' ] ; then cat '+exclude_conf+' ; fi"'
+    exclude_conf = os_path_concat(prefix, EXCLUDE_CONF_ABSOLUTE_PATH)
+    command = '"if [ -f ' + exclude_conf + ' ] ; then cat ' + exclude_conf + ' ; fi"'
     args = 'ssh', '-p', str(port), host, '/bin/sh', '-c', command
-    stdoutdata, stderrdata = execute_or_exit(*args)
+    stdoutdata, dummy_stderrdata = execute_or_exit(*args)
     return parse_exclude_conf(stdoutdata, description)
 
 
@@ -249,7 +249,7 @@ def etc_backup(host, port, dataset, mountpoint, save):
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
     end = datetime.datetime.now()
-    syslog.syslog("etc " + host + ':' + str(port) + " finished, " + str(end-start).split('.')[0])
+    syslog.syslog("etc " + host + ':' + str(port) + " finished, " + str(end - start).split('.')[0])
 
 
 def raw_backup(host, port, dataset, mountpoint, save):
@@ -260,7 +260,7 @@ def raw_backup(host, port, dataset, mountpoint, save):
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
     end = datetime.datetime.now()
-    syslog.syslog("raw " + host + ':' + str(port) + " finished, " + str(end-start).split('.')[0])
+    syslog.syslog("raw " + host + ':' + str(port) + " finished, " + str(end - start).split('.')[0])
 
 
 def ovz_backup(host, port, dataset, mountpoint, save):
@@ -276,10 +276,10 @@ def ovz_backup(host, port, dataset, mountpoint, save):
     delete_orphan_backups(containers, mountpoint)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
-    print_ploop_containers_with_snapshots(host, port, containers)
+    print_containers_with_snapshots(host, port, containers)
     compact_all_ploop_containers(host, port, containers)
     end = datetime.datetime.now()
-    syslog.syslog("ovz " + host + ':' + str(port) + " finished, " + str(end-start).split('.')[0])
+    syslog.syslog("ovz " + host + ':' + str(port) + " finished, " + str(end - start).split('.')[0])
 
 
 #######################################################################################################################
@@ -287,11 +287,11 @@ def ovz_backup(host, port, dataset, mountpoint, save):
 
 def main():
     parser = argparse.ArgumentParser(prog='autobackup')
-    parser.add_argument('--host', required=True,  help="remote host to backup it on ZFS", metavar='HOST')
+    parser.add_argument('--host', required=True, help="remote host to backup it on ZFS", metavar='HOST')
     parser.add_argument('--port', required=False, help="remote port to backup it on ZFS", metavar='PORT', type=int, default=22)
-    parser.add_argument('--type', required=True,  help="remote host type: etc, raw, ovz", metavar='TYPE', choices=['etc', 'raw', 'ovz'])
-    parser.add_argument('--dest', required=True,  help="backup destination on local ZFS", metavar='PATH')
-    parser.add_argument('--save', required=True,  help="count of saved backup snapshots", metavar='COUNT', type=int)
+    parser.add_argument('--type', required=True, help="remote host type: etc, raw, ovz", metavar='TYPE', choices=['etc', 'raw', 'ovz'])
+    parser.add_argument('--dest', required=True, help="backup destination on local ZFS", metavar='PATH')
+    parser.add_argument('--save', required=True, help="count of saved backup snapshots", metavar='COUNT', type=int)
     args = parser.parse_args()
     if args.port < 1 or args.port > 65535:
         print "unexpected --port value '%s', it must be between 1 and 65535" % str(args.port)
