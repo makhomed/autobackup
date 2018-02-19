@@ -19,8 +19,8 @@ import uuid
 __author__ = "Gena Makhomed"
 __contact__ = "https://github.com/makhomed/autobackup"
 __license__ = "GPLv3"
-__version__ = "1.0.3"
-__date__ = "2018-01-08"
+__version__ = "1.0.4"
+__date__ = "2018-02-19"
 
 
 #######################################################################################################################
@@ -181,6 +181,7 @@ BUILT_IN_EXCLUDES_CONFIG = """
 /tmp/**
 /var/cache/**
 /var/tmp/**
+/var/spool/postfix/**
 """
 
 
