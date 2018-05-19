@@ -247,6 +247,7 @@ def etc_backup(host, port, dataset, mountpoint, save):
     syslog.syslog("etc " + host + ':' + str(port) + " started")
     extra_excludes = get_excludes_from_remote_host(host, port, None, 'host ' + host + ':' + str(port))
     rsync(host, port, '/etc', mountpoint, extra_excludes)
+    rsync(host, port, '/opt', mountpoint, extra_excludes)
     zfs_create_snapshot(dataset)
     zfs_delete_old_snapshots(dataset, save)
     end = datetime.datetime.now()
