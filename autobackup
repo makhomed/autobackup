@@ -19,8 +19,8 @@ import uuid
 __author__ = "Gena Makhomed"
 __contact__ = "https://github.com/makhomed/autobackup"
 __license__ = "GPLv3"
-__version__ = "1.0.5"
-__date__ = "2018-05-19"
+__version__ = "1.0.6"
+__date__ = "2018-07-08"
 
 
 #######################################################################################################################
@@ -66,7 +66,7 @@ def execute(*args):
 
 
 def zfs_list_datasets():
-    args = 'zfs', 'list', '-H', '-o', 'name,mountpoint'
+    args = '/sbin/zfs', 'list', '-H', '-o', 'name,mountpoint'
     stdoutdata, dummy_stderrdata = execute_or_exit(*args)
     zfs = dict()
     for line in stdoutdata.split('\n'):
@@ -78,7 +78,7 @@ def zfs_list_datasets():
 
 
 def zfs_list_snapshots(dataset):
-    args = 'zfs', 'list', '-t', 'snap', '-H', '-o', 'name'
+    args = '/sbin/zfs', 'list', '-t', 'snap', '-H', '-o', 'name'
     stdoutdata, dummy_stderrdata = execute_or_exit(*args)
     prefix = dataset + '@'
     snapshots = list()
@@ -89,11 +89,11 @@ def zfs_list_snapshots(dataset):
 
 
 def zfs_create_snapshot(dataset):
-    execute('zfs', 'snapshot', dataset + '@' + datetime.datetime.now().strftime('autobackup.%Y-%m-%d.%H:%M:%S'))
+    execute('/sbin/zfs', 'snapshot', dataset + '@' + datetime.datetime.now().strftime('autobackup.%Y-%m-%d.%H:%M:%S'))
 
 
 def zfs_delete_snapshot(snapshot):
-    execute('zfs', 'destroy', snapshot)
+    execute('/sbin/zfs', 'destroy', snapshot)
 
 
 def zfs_delete_old_snapshots(dataset, save):
