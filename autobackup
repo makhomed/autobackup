@@ -1,4 +1,4 @@
-#!/usr/bin/python -u
+#!/usr/bin/python2 -u
 
 """
  # /opt/autobackup/autobackup --host=example.com --type=etc --dest=/tank/backup/example.com --save=30
@@ -19,8 +19,8 @@ import uuid
 __author__ = "Gena Makhomed"
 __contact__ = "https://github.com/makhomed/autobackup"
 __license__ = "GPLv3"
-__version__ = "1.0.7"
-__date__ = "2018-07-08"
+__version__ = "1.1.0"
+__date__ = "2020-04-07"
 
 
 #######################################################################################################################
