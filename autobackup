@@ -78,7 +78,7 @@ def zfs_list_datasets():
 
 
 def zfs_list_snapshots(dataset):
-    args = '/sbin/zfs', 'list', '-t', 'snap', '-H', '-o', 'name'
+    args = '/sbin/zfs', 'list', '-H', '-o', 'name', '-t', 'snap', dataset
     stdoutdata, dummy_stderrdata = execute_or_exit(*args)
     prefix = dataset + '@'
     snapshots = list()
