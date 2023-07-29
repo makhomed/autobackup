@@ -183,6 +183,7 @@ BUILT_IN_EXCLUDES_CONFIG = """
 /var/cache/**
 /var/tmp/**
 /var/spool/postfix/**
+/var/lib/redis/temp-*.rdb
 """
 
 
