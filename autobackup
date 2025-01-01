@@ -1,4 +1,4 @@
-#!/usr/bin/python2 -u
+#!/usr/bin/python3 -u
 
 """
  # /opt/autobackup/autobackup --host=example.com --type=etc --dest=/tank/backup/example.com --save=30
@@ -16,29 +16,29 @@ import sys
 import syslog
 import uuid
 
-__author__ = "Gena Makhomed"
-__contact__ = "https://github.com/makhomed/autobackup"
-__license__ = "GPLv3"
-__version__ = "1.1.1"
-__date__ = "2020-07-07"
+__contact__ = 'https://github.com/makhomed/autobackup'
+_license__ = 'GNU General Public License v3.0 or later'
+__version__ = "2.0.0"
+__date__ = "2025-01-01"
 
 
 #######################################################################################################################
 
-
 def execute_process(*args):
     process = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True, cwd='/')
-    stdoutdata, stderrdata = process.communicate()
-    return process.returncode, stdoutdata, stderrdata
+    stdout_bytes, stderr_bytes = process.communicate()
+    stdout = stdout_bytes.decode(encoding="utf-8", errors="replace").strip()
+    stderr = stderr_bytes.decode(encoding="utf-8", errors="replace").strip()
+    return process.returncode, stdout, stderr
 
 
 def execute_or_exit(*args):
     returncode, stdoutdata, stderrdata = execute_process(*args)
     if returncode != 0:
-        print "fatal error: execute(", args, ") failed"
-        print "returncode:", returncode
-        print "stdout:", stdoutdata
-        print "stderr:", stderrdata
+        print("fatal error: execute(", args, ") failed")
+        print("returncode:", returncode)
+        print("stdout:", stdoutdata)
+        print("stderr:", stderrdata)
         sys.exit(1)
     return stdoutdata, stderrdata
 
@@ -46,19 +46,19 @@ def execute_or_exit(*args):
 def execute_or_warning(*args):
     returncode, stdoutdata, stderrdata = execute_process(*args)
     if stdoutdata != '' or stderrdata != '':
-        print "execute(", args, ") failed"
-        print "returncode:", returncode
-        print "stdout:", stdoutdata
-        print "stderr:", stderrdata
+        print("execute(", args, ") failed")
+        print("returncode:", returncode)
+        print("stdout:", stdoutdata)
+        print("stderr:", stderrdata)
 
 
 def execute(*args):
     returncode, stdoutdata, stderrdata = execute_process(*args)
     if returncode != 0 or stdoutdata != '' or stderrdata != '':
-        print "fatal error: execute(", args, ") failed"
-        print "returncode:", returncode
-        print "stdout:", stdoutdata
-        print "stderr:", stderrdata
+        print("fatal error: execute(", args, ") failed")
+        print("returncode:", returncode)
+        print("stdout:", stdoutdata)
+        print("stderr:", stderrdata)
         sys.exit(1)
 
 
@@ -117,17 +117,17 @@ def vzlist(host, port):
 
 
 def print_containers_with_snapshots(host, port, containers):
-    for ctid, layout in containers.items():
+    for ctid, layout in list(containers.items()):
         if layout == 'ploop':
             args = 'ssh', '-p', str(port), host, 'vzctl', 'snapshot-list', ctid, '-H'
             stdoutdata, dummy_stderrdata = execute_or_exit(*args)
             stdout = stdoutdata.strip()
             if stdout != '':
-                print "container '%s' has active ploop snapshot, can't compact it" % (ctid)
+                print("container '%s' has active ploop snapshot, can't compact it" % (ctid))
 
 
 def compact_all_ploop_containers(host, port, containers):
-    for ctid, layout in containers.items():
+    for ctid, layout in list(containers.items()):
         if layout == 'ploop':
             execute_or_exit('ssh', '-p', str(port), host, 'vzctl', 'compact', ctid)
 
@@ -224,7 +224,7 @@ def parse_exclude_conf(config, description):
         elif line[0] == '#':
             continue
         elif line[0] != '/':
-            print 'WARNING: unexpected excludes.conf line "%s" from %s' % (line, description)
+            print('WARNING: unexpected excludes.conf line "%s" from %s' % (line, description))
         else:
             excludes.append(line)
     return excludes
@@ -271,11 +271,11 @@ def ovz_backup(host, port, dataset, mountpoint, save):
     start = datetime.datetime.now()
     syslog.syslog("ovz " + host + ':' + str(port) + " started")
     containers = vzlist(host, port)
-    for ctid, layout in containers.items():
+    for ctid, layout in list(containers.items()):
         if layout == 'ploop':
             backup_ploop_container(host, port, ctid, mountpoint)
         else:
-            print "container '%s' at %s:%s has unsupported layout type '%s', can't backup it" % (ctid, host, str(port), layout)
+            print("container '%s' at %s:%s has unsupported layout type '%s', can't backup it" % (ctid, host, str(port), layout))
     backup_hardware_node(host, port, mountpoint)
     delete_orphan_backups(containers, mountpoint)
     zfs_create_snapshot(dataset)
@@ -298,15 +298,15 @@ def main():
     parser.add_argument('--save', required=True, help="count of saved backup snapshots", metavar='COUNT', type=int)
     args = parser.parse_args()
     if args.port < 1 or args.port > 65535:
-        print "unexpected --port value '%s', it must be between 1 and 65535" % str(args.port)
+        print("unexpected --port value '%s', it must be between 1 and 65535" % str(args.port))
         sys.exit(1)
     if args.save < 1 or args.save > 90:
-        print "unexpected --save value '%s', it must be between 1 and 90" % str(args.save)
+        print("unexpected --save value '%s', it must be between 1 and 90" % str(args.save))
         sys.exit(1)
     args.dest = os.path.abspath(args.dest)
     zfs = zfs_list_datasets()
     if args.dest not in zfs:
-        print "unexpected --dest value '%s', it must be dedicated ZFS filesystem mountpoint" % args.dest
+        print("unexpected --dest value '%s', it must be dedicated ZFS filesystem mountpoint" % args.dest)
         sys.exit(1)
     if args.type == 'etc':
         etc_backup(host=args.host, port=args.port, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
@@ -315,7 +315,7 @@ def main():
     elif args.type == 'ovz':
         ovz_backup(host=args.host, port=args.port, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     else:
-        print "unexpected --type value '%s', it must be 'etc', 'raw' or 'ovz'" % args.type
+        print("unexpected --type value '%s', it must be 'etc', 'raw' or 'ovz'" % args.type)
         sys.exit(1)
 
 
