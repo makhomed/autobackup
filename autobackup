@@ -6,19 +6,23 @@
  # /opt/autobackup/autobackup --host=example.org --type=ovz --dest=/tank/backup/example.org --save=30
 """
 
+from pathlib import Path
+
 import argparse
 import datetime
+import fcntl
 import os
 import os.path
 import shutil
 import subprocess
 import sys
 import syslog
+import time
 import uuid
 
 __contact__ = 'https://github.com/makhomed/autobackup'
 _license__ = 'GNU General Public License v3.0 or later'
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __date__ = "2025-01-01"
 
 
@@ -243,47 +247,85 @@ def get_excludes_from_remote_host(host, port, prefix, description):
 
 #######################################################################################################################
 
+class lock:
+    def __init__(self, mountpoint):
+        self.lock_mod_name = Path(__file__).stem
+        self.lock_base_dir = Path(f'/run/lock/{self.lock_mod_name}')
+        self.lock_name = Path(mountpoint).name
+        self.lock_path = self.lock_base_dir / self.lock_name
+
+    def __enter__(self):
+        self.lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.lock_path.touch(mode=0o600, exist_ok=True)
+        self.lock_file = self.lock_path.open('wb')
+        self.wait_seconds = 0
+        self.wait_hours = 0
+        while True:
+            try:
+                fcntl.lockf(self.lock_file, fcntl.LOCK_EX|fcntl.LOCK_NB)
+                return
+            except OSError as error:
+                time.sleep(1)
+                self.wait_seconds += 1
+                if self.wait_seconds >= 60 * 60 and self.wait_seconds % ( 60 * 60 ) == 0:
+                    print(f'WARNING: wait for lock {self.wait_seconds//60//60:2} hours')
+                    self.wait_hours += 1
+                    if self.wait_hours >= 24:
+                        print(f'FATAL: wait for lock 24 hours')
+                        sys.exit(1)
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        fcntl.lockf(self.lock_file, fcntl.LOCK_UN)
+        self.lock_file.close()
+        self.lock_file = None
+        self.lock_path.touch(mode=0o600, exist_ok=True)
+
+#######################################################################################################################
+
 
 def etc_backup(host, port, dataset, mountpoint, save):
-    start = datetime.datetime.now()
-    syslog.syslog("etc " + host + ':' + str(port) + " started")
-    extra_excludes = get_excludes_from_remote_host(host, port, None, 'host ' + host + ':' + str(port))
-    rsync(host, port, '/etc', mountpoint, extra_excludes)
-    rsync(host, port, '/opt', mountpoint, extra_excludes)
-    zfs_create_snapshot(dataset)
-    zfs_delete_old_snapshots(dataset, save)
-    end = datetime.datetime.now()
-    syslog.syslog("etc " + host + ':' + str(port) + " finished, " + str(end - start).split('.')[0])
+    with lock(mountpoint):
+        start = datetime.datetime.now()
+        syslog.syslog("etc " + host + ':' + str(port) + " started")
+        extra_excludes = get_excludes_from_remote_host(host, port, None, 'host ' + host + ':' + str(port))
+        rsync(host, port, '/etc', mountpoint, extra_excludes)
+        rsync(host, port, '/opt', mountpoint, extra_excludes)
+        zfs_create_snapshot(dataset)
+        zfs_delete_old_snapshots(dataset, save)
+        end = datetime.datetime.now()
+        syslog.syslog("etc " + host + ':' + str(port) + " finished, " + str(end - start).split('.')[0])
 
 
 def raw_backup(host, port, dataset, mountpoint, save):
-    start = datetime.datetime.now()
-    syslog.syslog("raw " + host + ':' + str(port) + " started")
-    extra_excludes = get_excludes_from_remote_host(host, port, None, 'host ' + host + ':' + str(port))
-    rsync(host, port, '/', mountpoint, extra_excludes)
-    zfs_create_snapshot(dataset)
-    zfs_delete_old_snapshots(dataset, save)
-    end = datetime.datetime.now()
-    syslog.syslog("raw " + host + ':' + str(port) + " finished, " + str(end - start).split('.')[0])
+    with lock(mountpoint):
+        start = datetime.datetime.now()
+        syslog.syslog("raw " + host + ':' + str(port) + " started")
+        extra_excludes = get_excludes_from_remote_host(host, port, None, 'host ' + host + ':' + str(port))
+        rsync(host, port, '/', mountpoint, extra_excludes)
+        zfs_create_snapshot(dataset)
+        zfs_delete_old_snapshots(dataset, save)
+        end = datetime.datetime.now()
+        syslog.syslog("raw " + host + ':' + str(port) + " finished, " + str(end - start).split('.')[0])
 
 
 def ovz_backup(host, port, dataset, mountpoint, save):
-    start = datetime.datetime.now()
-    syslog.syslog("ovz " + host + ':' + str(port) + " started")
-    containers = vzlist(host, port)
-    for ctid, layout in list(containers.items()):
-        if layout == 'ploop':
-            backup_ploop_container(host, port, ctid, mountpoint)
-        else:
-            print("container '%s' at %s:%s has unsupported layout type '%s', can't backup it" % (ctid, host, str(port), layout))
-    backup_hardware_node(host, port, mountpoint)
-    delete_orphan_backups(containers, mountpoint)
-    zfs_create_snapshot(dataset)
-    zfs_delete_old_snapshots(dataset, save)
-    print_containers_with_snapshots(host, port, containers)
-    compact_all_ploop_containers(host, port, containers)
-    end = datetime.datetime.now()
-    syslog.syslog("ovz " + host + ':' + str(port) + " finished, " + str(end - start).split('.')[0])
+    with lock(mountpoint):
+        start = datetime.datetime.now()
+        syslog.syslog("ovz " + host + ':' + str(port) + " started")
+        containers = vzlist(host, port)
+        for ctid, layout in list(containers.items()):
+            if layout == 'ploop':
+                backup_ploop_container(host, port, ctid, mountpoint)
+            else:
+                print("container '%s' at %s:%s has unsupported layout type '%s', can't backup it" % (ctid, host, str(port), layout))
+        backup_hardware_node(host, port, mountpoint)
+        delete_orphan_backups(containers, mountpoint)
+        zfs_create_snapshot(dataset)
+        zfs_delete_old_snapshots(dataset, save)
+        print_containers_with_snapshots(host, port, containers)
+        compact_all_ploop_containers(host, port, containers)
+        end = datetime.datetime.now()
+        syslog.syslog("ovz " + host + ':' + str(port) + " finished, " + str(end - start).split('.')[0])
 
 
 #######################################################################################################################
@@ -304,10 +346,18 @@ def main():
         print("unexpected --save value '%s', it must be between 1 and 90" % str(args.save))
         sys.exit(1)
     args.dest = os.path.abspath(args.dest)
+    assert args.dest[-1] != '/'
     zfs = zfs_list_datasets()
     if args.dest not in zfs:
-        print("unexpected --dest value '%s', it must be dedicated ZFS filesystem mountpoint" % args.dest)
-        sys.exit(1)
+        parent_dir = os.path.dirname(args.dest)
+        if parent_dir in zfs:
+            assert args.dest[0] == '/'
+            dataset = args.dest[1:]
+            execute('/sbin/zfs', 'create', dataset)
+            zfs[args.dest] = dataset
+        else:
+            print("\nFATAL: unexpected --dest '%s' parent dir value '%s', it must be dedicated ZFS filesystem mountpoint\n" % (args.dest, parent_dir))
+            sys.exit(1)
     if args.type == 'etc':
         etc_backup(host=args.host, port=args.port, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     elif args.type == 'raw':
@@ -315,7 +365,7 @@ def main():
     elif args.type == 'ovz':
         ovz_backup(host=args.host, port=args.port, dataset=zfs[args.dest], mountpoint=args.dest, save=args.save)
     else:
-        print("unexpected --type value '%s', it must be 'etc', 'raw' or 'ovz'" % args.type)
+        print("\nFATAL: unexpected --type value '%s', it must be 'etc', 'raw' or 'ovz'\n" % args.type)
         sys.exit(1)
 
 
