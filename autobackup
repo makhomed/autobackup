@@ -20,10 +20,9 @@ import syslog
 import time
 import uuid
 
-__contact__ = 'https://github.com/makhomed/autobackup'
 _license__ = 'GNU General Public License v3.0 or later'
-__version__ = "2.1.0"
-__date__ = "2025-01-01"
+__contact__ = 'https://github.com/makhomed/autobackup'
+__version__ = "2.2.0"
 
 
 #######################################################################################################################
@@ -179,15 +178,16 @@ def backup_hardware_node(host, port, mountpoint):
 
 BUILT_IN_EXCLUDES_CONFIG = """
 /dev/**
+/dump/**
 /proc/**
-/sys/**
 /run/**
+/sys/**
 /tank/**
 /tmp/**
 /var/cache/**
-/var/tmp/**
-/var/spool/postfix/**
 /var/lib/redis/temp-*.rdb
+/var/spool/postfix/**
+/var/tmp/**
 """
 
 
