@@ -22,7 +22,7 @@ import uuid
 
 _license__ = 'GNU General Public License v3.0 or later'
 __contact__ = 'https://github.com/makhomed/autobackup'
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 
 #######################################################################################################################
@@ -271,7 +271,7 @@ class lock:
                     print(f'WARNING: wait for lock {self.wait_seconds//60//60:2} hours')
                     self.wait_hours += 1
                     if self.wait_hours >= 24:
-                        print(f'FATAL: wait for lock 24 hours')
+                        print(f'\nFATAL: wait for lock {self.wait_hours} hours')
                         sys.exit(1)
 
     def __exit__(self, exception_type, exception_value, traceback):
