@@ -22,8 +22,7 @@ import uuid
 
 _license__ = 'GNU General Public License v3.0 or later'
 __contact__ = 'https://github.com/makhomed/autobackup'
-__version__ = "2.3.0"
-
+__version__ = "2.3.1"
 
 #######################################################################################################################
 
@@ -188,6 +187,8 @@ BUILT_IN_EXCLUDES_CONFIG = """
 /var/lib/redis/temp-*.rdb
 /var/spool/postfix/**
 /var/tmp/**
+/swapfile
+/var/swapfile
 """
 
 
