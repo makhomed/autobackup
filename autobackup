@@ -22,7 +22,7 @@ import uuid
 
 _license__ = 'GNU General Public License v3.0 or later'
 __contact__ = 'https://github.com/makhomed/autobackup'
-__version__ = "2.3.1"
+__version__ = "2.3.2"
 
 #######################################################################################################################
 
@@ -287,6 +287,7 @@ class lock:
 def etc_backup(host, port, dataset, mountpoint, save):
     with lock(mountpoint):
         start = datetime.datetime.now()
+        syslog.openlog(ident="autobackup")
         syslog.syslog("etc " + host + ':' + str(port) + " started")
         extra_excludes = get_excludes_from_remote_host(host, port, None, 'host ' + host + ':' + str(port))
         rsync(host, port, '/etc', mountpoint, extra_excludes)
@@ -300,6 +301,7 @@ def etc_backup(host, port, dataset, mountpoint, save):
 def raw_backup(host, port, dataset, mountpoint, save):
     with lock(mountpoint):
         start = datetime.datetime.now()
+        syslog.openlog(ident="autobackup")
         syslog.syslog("raw " + host + ':' + str(port) + " started")
         extra_excludes = get_excludes_from_remote_host(host, port, None, 'host ' + host + ':' + str(port))
         rsync(host, port, '/', mountpoint, extra_excludes)
@@ -312,6 +314,7 @@ def raw_backup(host, port, dataset, mountpoint, save):
 def ovz_backup(host, port, dataset, mountpoint, save):
     with lock(mountpoint):
         start = datetime.datetime.now()
+        syslog.openlog(ident="autobackup")
         syslog.syslog("ovz " + host + ':' + str(port) + " started")
         containers = vzlist(host, port)
         for ctid, layout in list(containers.items()):
