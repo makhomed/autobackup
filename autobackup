@@ -22,7 +22,7 @@ import uuid
 
 _license__ = 'GNU General Public License v3.0 or later'
 __contact__ = 'https://github.com/makhomed/autobackup'
-__version__ = "2.3.2"
+__version__ = "2.3.3"
 
 #######################################################################################################################
 
@@ -193,6 +193,8 @@ BUILT_IN_EXCLUDES_CONFIG = """
 
 
 def rsync(src_host, src_port, src_dir, dest_dir, extra_excludes):
+    if ':' in src_host and src_host[0] != '[':
+        src_host = '[' + src_host + ']'
     args_prefix = 'rsync', '-aqH', '--no-compress', '-e', 'ssh -p ' + str(src_port)
     args_suffix = '--delete-during', '--delete-excluded', '--ignore-errors', \
         '--force', '--numeric-ids', '--timeout=3600', src_host + ':' + src_dir, dest_dir
