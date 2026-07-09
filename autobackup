@@ -189,6 +189,7 @@ BUILT_IN_EXCLUDES_CONFIG = """
 /var/tmp/**
 /swapfile
 /var/swapfile
+/var/swap/**
 """
 
 
